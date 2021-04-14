@@ -8,7 +8,7 @@ from torch.nn import functional as F
 
 # Factorised NoisyLinear layer with bias
 class NoisyLinear(nn.Module):
-  def __init__(self, in_features, out_features, std_init=0.5):
+  def __init__(self, in_features, out_features, std_init=0.5, bias=True):
     super(NoisyLinear, self).__init__()
     self.in_features = in_features
     self.out_features = out_features
@@ -16,6 +16,7 @@ class NoisyLinear(nn.Module):
     self.weight_mu = nn.Parameter(torch.empty(out_features, in_features))
     self.weight_sigma = nn.Parameter(torch.empty(out_features, in_features))
     self.register_buffer('weight_epsilon', torch.empty(out_features, in_features))
+    self.bias = bias
     self.bias_mu = nn.Parameter(torch.empty(out_features))
     self.bias_sigma = nn.Parameter(torch.empty(out_features))
     self.register_buffer('bias_epsilon', torch.empty(out_features))
@@ -41,9 +42,15 @@ class NoisyLinear(nn.Module):
 
   def forward(self, input):
     if self.training:
-      return F.linear(input, self.weight_mu + self.weight_sigma * self.weight_epsilon, self.bias_mu + self.bias_sigma * self.bias_epsilon)
+      if self.bias:
+        return F.linear(input, self.weight_mu + self.weight_sigma * self.weight_epsilon, self.bias_mu + self.bias_sigma * self.bias_epsilon)
+      else:
+        return F.linear(input, self.weight_mu + self.weight_sigma * self.weight_epsilon, self.bias_sigma * self.bias_epsilon)
     else:
-      return F.linear(input, self.weight_mu, self.bias_mu)
+      if self.bias:
+        return F.linear(input, self.weight_mu, self.bias_mu)
+      else:
+        return F.linear(input, self.weight_mu)
 
 
 class DQN(nn.Module):
@@ -58,13 +65,13 @@ class DQN(nn.Module):
                                  nn.Conv2d(64, 64, 3, stride=1, padding=0), nn.ReLU())
       self.conv_output_size = 3136
     elif args.architecture == 'data-efficient':
-      self.convs = nn.Sequential(nn.Conv2d(args.history_length, 32, 5, stride=5, padding=0), nn.ReLU(),
-                                 nn.Conv2d(32, 64, 5, stride=5, padding=0), nn.ReLU())
+      self.convs = nn.Sequential(nn.Conv2d(args.history_length, 32, 5, stride=5, padding=0, bias=(args.biases!='all')), nn.ReLU(),
+                                 nn.Conv2d(32, 64, 5, stride=5, padding=0, bias=(args.biases!='all')), nn.ReLU())
       self.conv_output_size = 576
-    self.fc_h_v = NoisyLinear(self.conv_output_size, args.hidden_size, std_init=args.noisy_std)
-    self.fc_h_a = NoisyLinear(self.conv_output_size, args.hidden_size, std_init=args.noisy_std)
-    self.fc_z_v = NoisyLinear(args.hidden_size, self.atoms, std_init=args.noisy_std)
-    self.fc_z_a = NoisyLinear(args.hidden_size, action_space * self.atoms, std_init=args.noisy_std)
+    self.fc_h_v = NoisyLinear(self.conv_output_size, args.hidden_size, std_init=args.noisy_std, bias=(args.biases!='all'))
+    self.fc_h_a = NoisyLinear(self.conv_output_size, args.hidden_size, std_init=args.noisy_std, bias=(args.biases!='all'))
+    self.fc_z_v = NoisyLinear(args.hidden_size, self.atoms, std_init=args.noisy_std, bias=(args.biases!='all'))
+    self.fc_z_a = NoisyLinear(args.hidden_size, action_space * self.atoms, std_init=args.noisy_std, bias=(args.biases=='none'))
 
   def forward(self, x, log=False):
     x = self.convs(x)
